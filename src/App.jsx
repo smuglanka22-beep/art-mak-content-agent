@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Settings, X, MessageSquare, Radar } from "lucide-react";
-import ContentAgent from "./pages/ContentAgent.jsx";
+import { Settings, X, Film, Radar } from "lucide-react";
+import ProductionPipeline from "./pages/ProductionPipeline.jsx";
 import ReelsDashboard from "./pages/ReelsDashboard.jsx";
 import { getApiKey, setApiKey } from "./lib/anthropic.js";
 
@@ -9,11 +9,17 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [keyInput, setKeyInput] = useState(getApiKey());
   const [saved, setSaved] = useState(false);
+  const [pendingReelSeed, setPendingReelSeed] = useState(null);
 
   const saveKey = () => {
     setApiKey(keyInput.trim());
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
+  };
+
+  const sendToProduction = (topic) => {
+    setPendingReelSeed(topic);
+    setTab("content");
   };
 
   return (
@@ -32,8 +38,8 @@ export default function App() {
       >
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={() => setTab("content")} style={tabStyle(tab === "content")}>
-            <MessageSquare size={14} style={{ verticalAlign: "-2px", marginRight: 6 }} />
-            Контент-агент
+            <Film size={14} style={{ verticalAlign: "-2px", marginRight: 6 }} />
+            Продакшн
           </button>
           <button onClick={() => setTab("reels")} style={tabStyle(tab === "reels")}>
             <Radar size={14} style={{ verticalAlign: "-2px", marginRight: 6 }} />
@@ -105,7 +111,11 @@ export default function App() {
         </div>
       )}
 
-      {tab === "content" ? <ContentAgent /> : <ReelsDashboard />}
+      {tab === "content" ? (
+        <ProductionPipeline pendingSeed={pendingReelSeed} onSeedConsumed={() => setPendingReelSeed(null)} />
+      ) : (
+        <ReelsDashboard onSendToProduction={sendToProduction} />
+      )}
     </div>
   );
 }

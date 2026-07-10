@@ -150,7 +150,7 @@ function LogLine({ icon, text, dim }) {
 }
 
 // ─── Scenario modal ─────────────────────────────────────────────────────────
-function ScenarioModal({ scenario, onClose }) {
+function ScenarioModal({ scenario, onClose, onSendToProduction }) {
   if (!scenario) return null;
   const { reel, data, loading, error } = scenario;
   const colors = [C.accent, C.a2, C.a3, C.gold];
@@ -199,6 +199,42 @@ function ScenarioModal({ scenario, onClose }) {
 
         {data && !loading && (
           <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+
+            {/* Structured breakdown: hook → trigger → idea → adaptation */}
+            {data.breakdown && (
+              <Section title="🧩 Разбор: хук → триггер → идея → адаптация" color={C.a2}>
+                <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+                  {[
+                    { label:"ХУК", value:data.breakdown.hook, col:C.a2 },
+                    { label:"ТРИГГЕР", value:data.breakdown.trigger, col:C.a3 },
+                    { label:"ИДЕЯ", value:data.breakdown.idea, col:C.gold },
+                    { label:"АДАПТАЦИЯ ПОД ART MAK", value:data.breakdown.adaptation, col:C.accent },
+                  ].map((b,i)=>(
+                    <div key={i} style={{
+                      display:"flex", gap:12, background:C.card, borderRadius:10,
+                      padding:"12px 14px", borderLeft:`3px solid ${b.col}`, flexWrap:"wrap"
+                    }}>
+                      <div style={{ flexShrink:0, width:150, fontSize:10, fontWeight:800, color:b.col, letterSpacing:1 }}>{b.label}</div>
+                      <div style={{ flex:1, minWidth:180, fontSize:13, color:C.text, lineHeight:1.6 }}>{b.value}</div>
+                    </div>
+                  ))}
+                </div>
+                {onSendToProduction && (
+                  <button
+                    onClick={() => { onSendToProduction(data.breakdown.adaptation); onClose(); }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8, marginTop: 14,
+                      width: "100%", justifyContent: "center",
+                      background: `linear-gradient(135deg,${C.a2},${C.accent})`,
+                      border: "none", borderRadius: 10, color: "#fff",
+                      padding: "11px", fontSize: 13, fontWeight: 800, cursor: "pointer",
+                    }}
+                  >
+                    🚀 Отправить в продакшн
+                  </button>
+                )}
+              </Section>
+            )}
 
             {/* Hook analysis */}
             <Section title="🎯 Почему залетело" color={C.a2}>
@@ -290,12 +326,17 @@ function ReelCard({ reel, onAnalyze, selected }) {
   const col = sc>28?C.accent:sc>15?C.gold:C.a3;
   return (
     <div onClick={()=>onAnalyze(reel)} style={{
-      background: selected?C.accent+"0e":C.card,
-      border:`1px solid ${selected?C.accent:C.border}`,
+      background: reel.isMine?C.gold+"0e":selected?C.accent+"0e":C.card,
+      border:`1px solid ${reel.isMine?C.gold:selected?C.accent:C.border}`,
       borderRadius:16, padding:"18px 20px", cursor:"pointer",
       transition:"all .2s", position:"relative", overflow:"hidden",
     }}>
-      {reel.isReel && sc>28 && (
+      {reel.isMine && (
+        <div style={{ position:"absolute", top:12, right:12,
+          background:C.gold, color:"#1a1a1a", fontSize:9, fontWeight:800,
+          padding:"2px 8px", borderRadius:20, letterSpacing:1 }}>⭐ МОЙ</div>
+      )}
+      {!reel.isMine && reel.isReel && sc>28 && (
         <div style={{ position:"absolute", top:12, right:12,
           background:C.accent, color:"#fff", fontSize:9, fontWeight:800,
           padding:"2px 8px", borderRadius:20, letterSpacing:1 }}>🔥 VIRAL</div>
@@ -361,10 +402,11 @@ function ReelCard({ reel, onAnalyze, selected }) {
 }
 
 // ─── Main app ────────────────────────────────────────────────────────────────
-export default function ReelsDashboard() {
+export default function ReelsDashboard({ onSendToProduction }) {
   const [apifyToken, setApifyToken] = useState(() => localStorage.getItem("artmak_apify_token") || "");
   const [showToken, setShowToken] = useState(false);
-  const [customUsernames, setCustomUsernames] = useState("hubermanlab, alexhormozi, garyvee");
+  const [customUsernames, setCustomUsernames] = useState("");
+  const [myUsername, setMyUsername] = useState("");
   const [followers, setFollowers] = useState(5000);
   const [minViews, setMinViews] = useState(50000);
   const [onlyReels, setOnlyReels] = useState(true);
@@ -375,6 +417,7 @@ export default function ReelsDashboard() {
   const [scenario, setScenario] = useState(null);
   const [activeTab, setActiveTab] = useState("setup");
   const [history, setHistory] = useState([]);
+  const [autoAnalyzing, setAutoAnalyzing] = useState(false);
 
   useEffect(() => {
     localStorage.setItem("artmak_apify_token", apifyToken);
@@ -386,9 +429,11 @@ export default function ReelsDashboard() {
 
   // ── Real Apify scan ──────────────────────────────────────────────────────
   const runRealScan = async () => {
-    const usernames = customUsernames.split(",").map(u=>u.trim().replace("@","")).filter(Boolean);
+    const competitorUsernames = customUsernames.split(",").map(u=>u.trim().replace("@","")).filter(Boolean);
+    const myClean = myUsername.trim().replace("@","");
+    const usernames = myClean ? [...new Set([myClean, ...competitorUsernames])] : competitorUsernames;
     if (!apifyToken) { addLog("❌","Введите Apify API-токен"); return; }
-    if (!usernames.length) { addLog("❌","Добавьте хотя бы одного конкурента"); return; }
+    if (!usernames.length) { addLog("❌","Добавьте хотя бы одного конкурента или свой аккаунт"); return; }
 
     setScanning(true); setReels([]); setLogs([]);
     setActiveTab("scan");
@@ -444,21 +489,30 @@ export default function ReelsDashboard() {
         const er = item.views > 0
           ? +((item.likes + item.comments*3 + item.shares*5) / item.views * 100).toFixed(2)
           : 0;
-        return { ...item, er, viral_score: calcViralScore(item) };
+        const isMine = myClean && item.username.toLowerCase() === myClean.toLowerCase();
+        return { ...item, er, viral_score: calcViralScore(item), isMine };
       });
 
-      // Filter
-      let filtered = normalized.filter(r => r.views >= minViews);
-      if (onlyReels) filtered = filtered.filter(r => r.isReel);
+      // Filter — always keep own reels regardless of view threshold
+      let filtered = normalized.filter(r => r.isMine || r.views >= minViews);
+      if (onlyReels) filtered = filtered.filter(r => r.isReel || r.isMine);
       const sorted = filtered.sort((a,b)=>b.viral_score-a.viral_score);
 
-      addLog("🔥", `Вирусных роликов (score>15): ${sorted.filter(r=>r.viral_score>15).length}`);
+      addLog("🔥", `Вирусных роликов (score>15): ${sorted.filter(r=>r.viral_score>15 && !r.isMine).length}`);
       addLog("📊", `После фильтра (≥${fmt(minViews)} просмотров): ${sorted.length} роликов`);
+
+      const mine = sorted.filter(r=>r.isMine);
+      const others = sorted.filter(r=>!r.isMine);
+      if (mine.length) {
+        const myAvg = +(mine.reduce((s,r)=>s+r.viral_score,0)/mine.length).toFixed(1);
+        const otherAvg = others.length ? +(others.reduce((s,r)=>s+r.viral_score,0)/others.length).toFixed(1) : 0;
+        addLog("📍", `Ваш средний Viral Score: ${myAvg} (у конкурентов: ${otherAvg})`);
+      }
 
       if (sorted.length === 0) {
         addLog("⚠️", "Нет роликов с таким порогом просмотров. Снизьте минимальный порог в настройках.");
-      } else {
-        addLog("✅", `Топ-1: @${sorted[0].username} — ${fmt(sorted[0].views)} просмотров, score ${sorted[0].viral_score}`);
+      } else if (others.length) {
+        addLog("✅", `Топ-1 у конкурентов: @${others[0].username} — ${fmt(others[0].views)} просмотров, score ${others[0].viral_score}`);
       }
 
       setReels(sorted);
@@ -489,6 +543,12 @@ export default function ReelsDashboard() {
 
 Отвечай ТОЛЬКО валидным JSON без markdown-оберток:
 {
+  "breakdown": {
+    "hook": "Точная фраза/приём, которым открывается ролик — что именно цепляет в первые 2-3 секунды",
+    "trigger": "Какой психологический триггер использован (любопытство, страх упустить, конфликт мнений, узнавание себя и т.п.) и почему он срабатывает именно на эту аудиторию",
+    "idea": "Суть формата/идеи ролика одной-двумя фразами, без деталей исполнения — то, что можно унести с собой",
+    "adaptation": "Конкретно как Алёна может адаптировать эту идею под Art Mak и объёмную живопись — без копирования, а через свой контекст, материалы, историю"
+  },
   "hook_analysis": "Почему этот ролик залетел (2-4 предложения с конкретикой)",
   "script": [
     {"timing":"0-3с","label":"HOOK","content":"точный текст/действие для первых 3 секунд на русском"},
@@ -524,6 +584,21 @@ export default function ReelsDashboard() {
   const viral = reels.filter(r=>r.viral_score>15);
   const avgScore = reels.length ? (reels.reduce((s,r)=>s+r.viral_score,0)/reels.length).toFixed(1) : "—";
   const totalViews = reels.reduce((s,r)=>s+r.views,0);
+  const myReels = reels.filter(r=>r.isMine);
+  const othersReels = reels.filter(r=>!r.isMine);
+  const myVsOthers = myReels.length ? {
+    mine: (myReels.reduce((s,r)=>s+r.viral_score,0)/myReels.length).toFixed(1),
+    others: othersReels.length ? (othersReels.reduce((s,r)=>s+r.viral_score,0)/othersReels.length).toFixed(1) : "—",
+  } : null;
+
+  const autoAnalyzeTop = async () => {
+    setAutoAnalyzing(true);
+    const top3 = [...othersReels].sort((a,b)=>b.viral_score-a.viral_score).slice(0,3);
+    for (const reel of top3) {
+      await analyzeReel(reel);
+    }
+    setAutoAnalyzing(false);
+  };
 
   const TAB = (id, label) => (
     <button key={id} onClick={()=>setActiveTab(id)} style={{
@@ -548,6 +623,9 @@ export default function ReelsDashboard() {
         input::placeholder{color:${C.muted}}
         input[type=range]{-webkit-appearance:none;height:4px;border-radius:2px;background:${C.border};outline:none;width:100%}
         input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:${C.accent};cursor:pointer}
+        @media (max-width: 860px) {
+          .setup-grid, .scan-grid { grid-template-columns: 1fr !important; }
+        }
       `}</style>
 
       {/* ── Header ── */}
@@ -574,8 +652,7 @@ export default function ReelsDashboard() {
 
         {/* ════════════ SETUP TAB ════════════ */}
         {activeTab==="setup" && (
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:24 }} className="setup-grid">
-            <style>{`@media (max-width: 860px) { .setup-grid { grid-template-columns: 1fr !important; } }`}</style>
+          <div className="setup-grid" style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:24 }}>
 
             {/* Left: Apify settings */}
             <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
@@ -644,25 +721,18 @@ export default function ReelsDashboard() {
                 <div style={{ fontSize:11, color:C.a2, fontWeight:800, letterSpacing:1.5, marginBottom:18 }}>🎯 АККАУНТЫ ДЛЯ АНАЛИЗА</div>
 
                 <Input
+                  label="ВАШ АККАУНТ В INSTAGRAM (для сравнения и авто-анализа)"
+                  value={myUsername}
+                  onChange={setMyUsername}
+                  placeholder="art_makusheva"
+                />
+
+                <Input
                   label="USERNAME КОНКУРЕНТОВ (через запятую)"
                   value={customUsernames}
                   onChange={setCustomUsernames}
-                  placeholder="hubermanlab, alexhormozi, garyvee"
+                  placeholder="paste_art_flowers, sculptura.studio"
                 />
-
-                <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:16 }}>
-                  {["hubermanlab","alexhormozi","garyvee","markmanson","timferriss","lewishowes"].map(u=>(
-                    <Tag key={u} active={customUsernames.includes(u)}
-                      onClick={()=>{
-                        const list = customUsernames.split(",").map(x=>x.trim()).filter(Boolean);
-                        setCustomUsernames(
-                          list.includes(u) ? list.filter(x=>x!==u).join(", ") : [...list,u].join(", ")
-                        );
-                      }}>
-                      @{u}
-                    </Tag>
-                  ))}
-                </div>
 
                 <div style={{ marginBottom:16 }}>
                   <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
@@ -720,8 +790,7 @@ export default function ReelsDashboard() {
 
         {/* ════════════ SCAN TAB ════════════ */}
         {activeTab==="scan" && (
-          <div style={{ display:"grid", gridTemplateColumns:"320px 1fr", gap:24 }} className="scan-grid">
-            <style>{`@media (max-width: 860px) { .scan-grid { grid-template-columns: 1fr !important; } }`}</style>
+          <div className="scan-grid" style={{ display:"grid", gridTemplateColumns:"320px 1fr", gap:24 }}>
 
             {/* Log panel */}
             <div>
@@ -759,6 +828,36 @@ export default function ReelsDashboard() {
                     </div>
                   ))}
                 </div>
+              )}
+
+              {myVsOthers && (
+                <div style={{ background:C.card, borderRadius:18, padding:20, border:`1px solid ${C.gold}40`, marginTop:16 }}>
+                  <div style={{ fontSize:11, color:C.gold, fontWeight:800, letterSpacing:1.5, marginBottom:14 }}>⭐ ВЫ ПРОТИВ КОНКУРЕНТОВ</div>
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0", borderBottom:`1px solid ${C.border}` }}>
+                    <span style={{ fontSize:12, color:C.muted }}>Ваш средний Viral Score</span>
+                    <span style={{ fontSize:14, fontWeight:800, color:C.gold, fontFamily:"monospace" }}>{myVsOthers.mine}</span>
+                  </div>
+                  <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 0" }}>
+                    <span style={{ fontSize:12, color:C.muted }}>Средний у конкурентов</span>
+                    <span style={{ fontSize:14, fontWeight:800, color:C.a3, fontFamily:"monospace" }}>{myVsOthers.others}</span>
+                  </div>
+                  <div style={{ fontSize:12, color:C.text, marginTop:10, lineHeight:1.6 }}>
+                    {myVsOthers.mine >= myVsOthers.others
+                      ? "Ваши ролики в среднем работают не хуже конкурентов 🎉"
+                      : "У конкурентов виральность выше — посмотрите разбор их топ-роликов ниже, чтобы понять за счёт чего"}
+                  </div>
+                </div>
+              )}
+
+              {othersReels.length>0 && (
+                <button onClick={autoAnalyzeTop} disabled={autoAnalyzing} style={{
+                  width:"100%", marginTop:16, padding:"12px",
+                  background:autoAnalyzing?C.border:`linear-gradient(135deg,${C.a2},${C.accent})`,
+                  border:"none", borderRadius:12, color:"#fff", fontSize:13, fontWeight:800,
+                  cursor:autoAnalyzing?"default":"pointer",
+                }}>
+                  {autoAnalyzing ? "⏳ Разбираю топ-3..." : "🧩 Разобрать топ-3 конкурента одним кликом"}
+                </button>
               )}
 
               <button onClick={()=>setActiveTab("setup")} style={{
@@ -837,7 +936,7 @@ export default function ReelsDashboard() {
         )}
       </div>
 
-      <ScenarioModal scenario={scenario} onClose={()=>setScenario(null)}/>
+      <ScenarioModal scenario={scenario} onClose={()=>setScenario(null)} onSendToProduction={onSendToProduction}/>
     </div>
   );
 }
